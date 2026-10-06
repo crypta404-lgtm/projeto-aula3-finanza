@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testes — Nova Transação</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #f4f2ee; color: #16181d; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    #summary { margin: 8px 0 20px; font-weight: 600; }
+    #summary.ok { color: #2f8a5b; }
+    #summary.fail { color: #c2453d; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 8px 12px; margin-bottom: 6px; border-radius: 8px; background: #fff; border-left: 4px solid #2f8a5b; }
+    li.fail { border-left-color: #c2453d; }
+    li small { display: block; color: #c2453d; margin-top: 4px; white-space: pre-wrap; }
+    iframe { width: 1024px; height: 900px; border: 1px solid #d4d0c8; border-radius: 8px; background: #fff; }
+    #report { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Testes — Nova Transação</h1>
+  <p id="summary">Executando…</p>
+  <ul id="results"></ul>
+  <pre id="report"></pre>
+  <iframe id="app" title="Site em teste"></iframe>
+
+<script>
+const APP_URL = '../index.html';
+const frame = document.getElementById('app');
+let win, doc;
+
+/* ---------- Utilitários ---------- */
+function load(width = 1024) {
+  frame.style.width = width + 'px';
+  return new Promise((resolve) => {
+    frame.onload = () => { win = frame.contentWindow; doc = frame.contentDocument; resolve(); };
+    frame.src = APP_URL + '?t=' + Date.now();
+  });
+}
+
+const $ = (sel) => doc.querySelector(sel);
+const $$ = (sel) => [...doc.querySelectorAll(sel)];
+
+function type(el, text) {
+  el.value = text;
+  el.dispatchEvent(new win.Event('input', { bubbles: true }));
+}
+function choose(el, value) {
+  el.value = value;
+  el.dispatchEvent(new win.Event('change', { bubbles: true }));
+}
+function submit() {
+  $('#transactionForm').querySelector('button[type="submit"]').click();
+}
+function errorOf(id) {
+  return $('#' + id).closest('.field').querySelector('.field__error').textContent;
+}
+function isInvalid(id) {
+  return $('#' + id).closest('.field').classList.contains('is-invalid');
+}
+function today() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+function fillValid() {
+  choose($('#tipo'), 'entrada');
+  type($('#valor'), '15000');
+  type($('#descricao'), 'Almoço com cliente');
+  choose($('#categoria'), 'alimentacao');
+  choose($('#conta'), 'cartao');
+}
+
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function eq(actual, expected, msg) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${msg}\n  esperado: ${e}\n  obtido:   ${a}`);
+}
+
+/* ---------- Casos de teste (seção 10 da spec) ---------- */
+const tests = [];
+const test = (name, fn, width) => tests.push({ name, fn, width });
+
+test('Cabeçalho: logo, 5 links (só "Transações" ativo) e ações', () => {
+  eq($('.brand__name').textContent.trim(), 'Finanza', 'Nome da marca');
+  const links = $$('.nav__link');
+  eq(links.map((a) => a.textContent.trim()), ['Dashboard', 'Transações', 'Contas', 'Relatórios', 'Metas'], 'Links do menu');
+  eq(links.filter((a) => a.classList.contains('nav__link--active')).map((a) => a.textContent.trim()), ['Transações'], 'Link ativo');
+  assert(links.every((a) => a.getAttribute('href') === '#'), 'Links devem ser apenas visuais (href="#")');
+  assert($('.topbar__actions .icon-btn') && $('.topbar__actions .avatar'), 'Faltam notificações/avatar');
+});
+
+test('Título "Nova Transação" centralizado', () => {
+  eq($('h1').textContent.trim(), 'Nova Transação', 'Texto do h1');
+  eq(win.getComputedStyle($('.page__heading')).textAlign, 'center', 'Alinhamento do título');
+});
+
+test('6 campos em lista na ordem correta', () => {
+  const labels = $$('.field__label').map((l) => l.textContent.trim());
+  eq(labels, ['Tipo', 'Valor', 'Descrição', 'Data', 'Categoria', 'Conta'], 'Ordem dos rótulos');
+  eq($$('.card .field').length, 6, 'Quantidade de linhas no card');
+});
+
+test('Selects com exatamente as opções da spec', () => {
+  const opts = (id) => [...$('#' + id).options].filter((o) => !o.disabled).map((o) => o.textContent.trim());
+  eq(opts('tipo'), ['Entrada', 'Saída'], 'Opções de Tipo');
+  eq(opts('categoria'), ['Alimentação', 'Saúde', 'Salário', 'Transporte', 'Lazer', 'Moradia'], 'Opções de Categoria');
+  eq(opts('conta'), ['Conta corrente', 'Cartão', 'Dinheiro'], 'Opções de Conta');
+});
+
+test('Valor: máscara de moeda BRL enquanto digita', () => {
+  const v = $('#valor');
+  type(v, '1');       eq(v.value, '0,01', 'Digitar "1"');
+  type(v, '150000');  eq(v.value, '1.500,00', 'Digitar "150000"');
+  type(v, '12a3');    eq(v.value, '1,23', 'Letras devem ser ignoradas');
+  type(v, '');        eq(v.value, '', 'Campo vazio');
+  eq($('.input-prefix__text').textContent.trim(), 'R$', 'Prefixo R$');
+});
+
+test('Data: calendário nativo e padrão = hoje', () => {
+  eq($('#data').type, 'date', 'Tipo do input');
+  eq($('#data').value, today(), 'Data padrão');
+  assert($('#openCalendar'), 'Botão de calendário ausente');
+});
+
+test('Salvar vazio mostra os 6 erros e foca o primeiro', () => {
+  $('#data').value = '';
+  submit();
+  eq(errorOf('tipo'), 'Selecione se é entrada ou saída.', 'Erro de Tipo');
+  eq(errorOf('valor'), 'Informe um valor maior que zero.', 'Erro de Valor');
+  eq(errorOf('descricao'), 'Descreva a transação (mín. 3 caracteres).', 'Erro de Descrição');
+  eq(errorOf('data'), 'Selecione uma data.', 'Erro de Data');
+  eq(errorOf('categoria'), 'Selecione uma categoria.', 'Erro de Categoria');
+  eq(errorOf('conta'), 'Selecione uma conta.', 'Erro de Conta');
+  eq(doc.activeElement && doc.activeElement.id, 'tipo', 'Foco no primeiro campo inválido');
+});
+
+test('Erro some ao corrigir o campo', () => {
+  submit();
+  assert(isInvalid('tipo'), 'Tipo deveria estar inválido');
+  choose($('#tipo'), 'saida');
+  assert(!isInvalid('tipo'), 'Erro de Tipo deveria sumir');
+  eq(errorOf('tipo'), '', 'Mensagem de Tipo');
+});
+
+test('Descrição: mínimo 3, máximo 80 e contador', () => {
+  const d = $('#descricao');
+  eq(d.maxLength, 80, 'maxlength');
+  type(d, 'ab');
+  eq($('#charCount').textContent, '2/80', 'Contador');
+  type(d, '   ab   ');
+  submit();
+  assert(isInvalid('descricao'), 'Descrição com 2 caracteres (após trim) deveria ser inválida');
+  type(d, 'abc');
+  assert(!isInvalid('descricao'), 'Descrição com 3 caracteres deveria ser válida');
+});
+
+test('Tipo: badge e cor do valor', () => {
+  choose($('#tipo'), 'entrada');
+  eq($('#typeBadge').textContent, '↑ Receita', 'Badge entrada');
+  assert(!$('#typeBadge').hidden, 'Badge deveria estar visível');
+  assert($('.input-prefix').classList.contains('is-entrada'), 'Valor deveria ficar verde');
+  choose($('#tipo'), 'saida');
+  eq($('#typeBadge').textContent, '↓ Despesa', 'Badge saída');
+  assert($('.input-prefix').classList.contains('is-saida'), 'Valor deveria ficar vermelho');
+});
+
+test('Salvar válido grava no localStorage, avisa e limpa', () => {
+  let storage;
+  try { storage = win.localStorage; storage.removeItem('transacoes'); } catch { storage = null; }
+  assert(storage, 'localStorage indisponível neste navegador — gravação não verificada');
+
+  fillValid();
+  submit();
+
+  assert($$('.field.is-invalid').length === 0, 'Não deveria haver erros');
+  eq($('#toast').textContent, 'Transação salva: + R$ 150,00', 'Texto do aviso');
+  assert($('#toast').classList.contains('is-visible'), 'Aviso deveria estar visível');
+
+  if (storage) {
+    const lista = JSON.parse(storage.getItem('transacoes'));
+    eq(lista.length, 1, 'Quantidade salva');
+    const t = lista[0];
+    eq(
+      { tipo: t.tipo, valor: t.valor, descricao: t.descricao, data: t.data, categoria: t.categoria, conta: t.conta },
+      { tipo: 'entrada', valor: 150, descricao: 'Almoço com cliente', data: today(), categoria: 'alimentacao', conta: 'cartao' },
+      'Objeto salvo'
+    );
+    assert(t.id && t.criadoEm, 'id/criadoEm ausentes');
+    storage.removeItem('transacoes');
+  }
+
+  eq($('#tipo').value, '', 'Tipo resetado');
+  eq($('#valor').value, '', 'Valor resetado');
+  eq($('#descricao').value, '', 'Descrição resetada');
+  eq($('#data').value, today(), 'Data volta para hoje');
+  eq($('#charCount').textContent, '0/80', 'Contador resetado');
+  assert($('#typeBadge').hidden, 'Badge deveria sumir');
+});
+
+test('Cancelar limpa o formulário e avisa', () => {
+  fillValid();
+  $('#cancelBtn').click();
+  eq($('#toast').textContent, 'Transação cancelada.', 'Texto do aviso');
+  eq($('#valor').value, '', 'Valor resetado');
+  eq($('#categoria').value, '', 'Categoria resetada');
+});
+
+test('Acessibilidade básica', () => {
+  eq(doc.documentElement.lang, 'pt-BR', 'lang do documento');
+  $$('.card input, .card select').forEach((el) => {
+    assert(doc.querySelector(`label[for="${el.id}"]`), `Campo #${el.id} sem <label for>`);
+  });
+  $$('button').forEach((b) => {
+    assert(b.textContent.trim() || b.getAttribute('aria-label'), 'Botão sem nome acessível');
+  });
+  eq($('#toast').getAttribute('role'), 'status', 'role do aviso');
+  eq($('#toast').getAttribute('aria-live'), 'polite', 'aria-live do aviso');
+});
+
+test('Celular (375px): sem rolagem horizontal, menu oculto, campos empilhados', () => {
+  const root = doc.documentElement;
+  assert(root.scrollWidth <= root.clientWidth, `Rolagem horizontal: ${root.scrollWidth}px > ${root.clientWidth}px`);
+  eq(win.getComputedStyle($('.nav')).display, 'none', 'Menu deveria estar oculto');
+  const cols = win.getComputedStyle($('.field')).gridTemplateColumns.split(' ').length;
+  eq(cols, 1, 'Campos deveriam ter 1 coluna');
+  const [cancel, save] = [$('#cancelBtn'), $('.btn--primary')];
+  assert(save.getBoundingClientRect().top < cancel.getBoundingClientRect().top, 'Salvar deveria ficar acima de Cancelar');
+}, 375);
+
+/* ---------- Runner ---------- */
+(async () => {
+  const list = document.getElementById('results');
+  const lines = [];
+  let passed = 0;
+
+  for (const t of tests) {
+    await load(t.width);
+    const li = document.createElement('li');
+    try {
+      await t.fn();
+      passed++;
+      li.textContent = '✔ ' + t.name;
+      lines.push('PASS  ' + t.name);
+    } catch (err) {
+      li.className = 'fail';
+      li.textContent = '✘ ' + t.name;
+      const small = document.createElement('small');
+      small.textContent = err.message;
+      li.appendChild(small);
+      lines.push('FAIL  ' + t.name + '\n      ' + err.message.replace(/\n/g, '\n      '));
+    }
+    list.appendChild(li);
+  }
+
+  await load();
+  const summary = document.getElementById('summary');
+  const ok = passed === tests.length;
+  summary.textContent = `${passed}/${tests.length} testes passaram`;
+  summary.className = ok ? 'ok' : 'fail';
+  lines.push(`\n${passed}/${tests.length} testes passaram`);
+  const report = document.getElementById('report');
+  report.textContent = lines.join('\n');
+  report.dataset.done = 'true';
+})();
+</script>
+</body>
+</html>
